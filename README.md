@@ -98,11 +98,15 @@ The API supports efficient cursor-based pagination for handling large comment da
   ```
 
 - **`sort = ranked`** - Get sorted on rank.
+  ```http
   GET /api/comments/:videoId?sort=ranked     # Default behavior, sorts by score
+  ```
 
 
 - **`sort = chronological`** - Get sorted chronological.
+  ```http
   GET /api/comments/:videoId?sort=chronological  # Returns in DB order (created_at DESC)
+  ```
 
 
 **Pagination Example:**
@@ -129,8 +133,8 @@ GET /api/comments/video123?type=top&limit=2&cursor=eyJjcmVhdGVkQXQiOiIyMDI1LTA3L
 ```http
 GET /api/comments/:commentId/replies
 ```
-Get replies for a specific comment with cursor pagination:
-```bash
+### Get replies for a specific comment with cursor pagination:
+```http
 GET /api/comments/comment-id/replies?limit=10&cursor=xyz
 ```
 
@@ -293,23 +297,23 @@ src/
    ```
 
 2. **Get top comments with pagination:**
-   ```bash
+    ```bash
    curl "http://localhost:4000/api/comments/abc123?type=top&limit=5"
-   ```
-  ```bash
+    ```
+    ```bash
    curl "http://localhost:4000/api/comments/video_123?type=top&sort=ranked"
-  ```
-  ```bash
+    ```
+    ```bash
    curl "http://localhost:4000/api/comments/video_123?type=top&sort=chronological"
-  ```
-  ```bash
+    ```
+    ```bash
    curl "http://localhost:4000/api/comments/video_123?type=top&sort=chronological&limit=2&cursor=eyJjcmVhdGVkQXQiOiIyMDI1LTA3LTMxVDAzOjU5OjM0LjYxN1oiLCJpZCI6IjEyYzUxYThkLWZlMTMtNDM4Zi1iYmNiLWUyNWE2NGUxNWFkYSJ9"
-   ```
+    ```
   
 3. **Get nested comments with replies:**
-   ```bash
+    ```bash
    curl "http://localhost:4000/api/comments/abc123?type=nested&limit=3&replies_limit=2"
-   ```
+    ```
 
 4. **Get next page using cursor:**
    ```bash
