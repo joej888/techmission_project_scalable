@@ -1,6 +1,6 @@
 # YouTube Comments API
 
-A simple REST API for managing YouTube video comments with a smart ranking system. Built with Node.js, Express, TypeScript, and ScyllaDB.
+A simple REST API for managing YouTube video comments with a smart ranking system and cursor-based pagination. Built with Node.js, Express, TypeScript, and ScyllaDB.
 
 ## What it does
 
@@ -9,6 +9,7 @@ This API lets you store and retrieve YouTube comments with features like:
 - Like/dislike comments
 - Smart comment ranking (popular comments appear first)
 - Get comments in different formats (top comments, nested with replies)
+- Efficient cursor-based pagination for large datasets
 
 ## Tech Stack
 
@@ -62,16 +63,62 @@ This API lets you store and retrieve YouTube comments with features like:
 
 ## API Endpoints
 
-### Get Comments
+### Get Comments with Pagination
 ```http
 GET /api/comments/:videoId
 ```
-Get all comments for a video with different options:
-- `?type=nested` - Get all comments & nested comments 
-- `?type=top` -Get all top comments without limit
-- `?type=top&topLevelLimit=10` - Get top 10 comments only
-- `?type=nested&topLevelLimit=5&repliesLimit=3` - Get comments with replies ** top level max 5 comments and each top comment will have max 3 replies
-- No query params - Get all comments ranked by score
+
+The API supports efficient cursor-based pagination for handling large comment datasets. Comments are fetched in chronological order (newest first) with optional ranking applied per page.
+
+**Pagination Parameters:**
+- `limit` - Number of comments per page (default: 20, max: 2147483647)
+- `cursor` - Base64 encoded cursor for next page (get from previous response)
+- `replies_limit` - Number of replies per comment in nested mode (default: 5)
+
+**Comment Types:**
+- **`type=top`** - Get top-level comments only (chronological order)
+  ```http
+  GET /api/comments/video123?type=top&limit=10
+  ```
+
+- **`type=nested`** - Get comments with their replies nested
+  ```http
+  GET /api/comments/video123?type=nested&limit=5&replies_limit=3
+  ```
+
+- **Default (no type)** - Get ranked comments (chronological order with metadata)
+  ```http
+  GET /api/comments/video123?limit=20
+  ```
+
+**Pagination Example:**
+```bash
+# First page
+GET /api/comments/video123?type=top&limit=2
+
+# Response includes cursor for next page
+{
+  "success": true,
+  "data": [...],
+  "pagination": {
+    "next_cursor": "eyJjcmVhdGVkQXQiOiIyMDI1LTA3LTMxVDAzOjU2OjI1Ljc1MFoiLCJpZCI6IjYyODgyMGIyLThhZDUtNDlmYi1iNDUyLWMyNmNjNDE1YzNhMSJ9",
+    "has_more": true,
+    "total_estimated": 150
+  }
+}
+
+# Next page using cursor
+GET /api/comments/video123?type=top&limit=2&cursor=eyJjcmVhdGVkQXQiOiIyMDI1LTA3LTMxVDAzOjU2OjI1Ljc1MFoiLCJpZCI6IjYyODgyMGIyLThhZDUtNDlmYi1iNDUyLWMyNmNjNDE1YzNhMSJ9
+```
+
+### Get Replies with Pagination
+```http
+GET /api/comments/:commentId/replies
+```
+Get replies for a specific comment with cursor pagination:
+```bash
+GET /api/comments/comment-id/replies?limit=10&cursor=xyz
+```
 
 ### Create Comment
 ```http
@@ -82,28 +129,63 @@ POST /api/comments
 {
   "videoId": "video123",
   "userId": "user456",
-  "content": "Great video!",
-  "parentCommentId": "optional-for-replies"
+  "content": "Great video!"
+}
+```
+
+### Create Reply
+```http
+POST /api/comments/:commentId/replies
+```
+**Body:**
+```json
+{
+  "userId": "user456",
+  "content": "I agree!"
 }
 ```
 
 ### Like/Dislike Actions
 ```http
-PUT /api/comments/:id/increaseLike
-PUT /api/comments/:id/decreaseLike
-PUT /api/comments/:id/increasedislike
-PUT /api/comments/:id/decreasedislike
+PUT /api/comments/:id/like/increase
+PUT /api/comments/:id/like/decrease
+PUT /api/comments/:id/dislike/increase
+PUT /api/comments/:id/dislike/decrease
+
+# For replies
+PUT /api/comments/replies/:id/like/increase
+PUT /api/comments/replies/:id/like/decrease
+PUT /api/comments/replies/:id/dislike/increase
+PUT /api/comments/replies/:id/dislike/decrease
 ```
 
-### Get Replies
+### Delete Operations
 ```http
-GET /api/comments/:id/replies?limit=5
+DELETE /api/comments/:id           # Delete comment
+DELETE /api/comments/replies/:id   # Delete reply
 ```
 
-### Delete Comment
-```http
-DELETE /api/comments/:id
-```
+## Pagination Logic
+
+The API uses **cursor-based pagination** for efficient traversal of large datasets:
+
+**How it works:**
+1. **Chronological Order**: Comments are fetched from database in `created_at DESC` order (newest first)
+2. **Cursor Generation**: Each page includes a cursor pointing to the last item's timestamp and ID
+3. **Next Page**: Use the cursor to fetch the next batch of chronologically older comments
+4. **Consistent Results**: No duplicate or skipped items even when new comments are added
+5. **Performance**: Efficient for large datasets unlike offset-based pagination
+
+**Benefits over offset pagination:**
+- ✅ No performance degradation with large offsets
+- ✅ No duplicate results when data changes
+- ✅ Consistent pagination even with real-time updates
+- ✅ Database-optimized queries using clustering keys
+
+**Ranking vs Pagination:**
+- Comments are fetched in chronological database order for consistent pagination
+- Ranking metadata (score, timeAgo, netScore) is calculated and included but doesn't affect pagination order
+- This ensures reliable pagination while preserving ranking information for display
 
 ## How the Ranking Works
 
@@ -125,20 +207,47 @@ Comments are ranked using a simple scoring system:
 
 ## Database Schema
 
-The API uses a single `comments` table:
+The API uses optimized tables for both storage and pagination:
 
 ```sql
+-- Original tables for data integrity
 CREATE TABLE comments (
   id UUID PRIMARY KEY,
   video_id TEXT,
   user_id TEXT,
   content TEXT,
-  likes INT,
-  dislikes INT,
+  likes BIGINT,
+  dislikes BIGINT,
   created_at TIMESTAMP,
-  parent_comment_id UUID,
-  reply_count INT
+  reply_count BIGINT
 );
+
+CREATE TABLE replies (
+  id UUID PRIMARY KEY,
+  comment_id UUID,
+  user_id TEXT,
+  content TEXT,
+  likes BIGINT,
+  dislikes BIGINT,
+  created_at TIMESTAMP
+);
+
+-- Indexing tables for efficient pagination
+CREATE TABLE comments_by_video_time (
+  video_id TEXT,
+  created_at TIMESTAMP,
+  id UUID,
+  -- ... other fields
+  PRIMARY KEY (video_id, created_at, id)
+) WITH CLUSTERING ORDER BY (created_at DESC, id DESC);
+
+CREATE TABLE replies_by_comment_time (
+  comment_id UUID,
+  created_at TIMESTAMP,
+  id UUID,
+  -- ... other fields
+  PRIMARY KEY (comment_id, created_at, id)
+) WITH CLUSTERING ORDER BY (created_at DESC, id DESC);
 ```
 
 ## Project Structure
@@ -169,14 +278,24 @@ src/
      -d '{"videoId": "abc123", "userId": "user1", "content": "Nice video!"}'
    ```
 
-2. **Get top comments:**
+2. **Get top comments with pagination:**
    ```bash
-   curl "http://localhost:4000/api/comments/abc123?type=top&topLevelLimit=5"
+   curl "http://localhost:4000/api/comments/abc123?type=top&limit=5"
    ```
 
-3. **Like a comment:**
+3. **Get nested comments with replies:**
    ```bash
-   curl -X PUT http://localhost:4000/api/comments/comment-id/increaseLike
+   curl "http://localhost:4000/api/comments/abc123?type=nested&limit=3&replies_limit=2"
+   ```
+
+4. **Get next page using cursor:**
+   ```bash
+   curl "http://localhost:4000/api/comments/abc123?type=top&limit=5&cursor=eyJjcmVhdGVkQXQi..."
+   ```
+
+5. **Like a comment:**
+   ```bash
+   curl -X PUT http://localhost:4000/api/comments/comment-id/like/increase
    ```
 
 ## Development
@@ -190,14 +309,16 @@ src/
 - The database schema is automatically created when you first run the app
 - All timestamps are stored in UTC
 - UUIDs are used for comment IDs
-- The ranking algorithm prioritizes recent, liked comments with engagement
+- Cursor-based pagination provides consistent performance for large datasets
+- Comments are stored in dual tables (original + indexing) for optimal query performance
 
 ## Common Issues
 
 1. **Database connection fails**: Check your ScyllaDB is running and credentials are correct
 2. **Port already in use**: Change PORT in .env file
 3. **Build errors**: Make sure TypeScript is properly installed
+4. **Invalid cursor error**: Cursors are base64 encoded and expire when data structure changes
 
 ---
 
-That's it! You now have a working YouTube comments API with smart ranking.
+That's it! You now have a working YouTube comments API with smart ranking and efficient cursor-based pagination.

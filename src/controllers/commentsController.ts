@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import {
   getCommentsByVideoIdWithCursor,
   getRepliesWithCursor,
-  getCommentsByVideoId,
   getRepliesByCommentIds,
   getCommentCountByVideoId,
   getReplyCountByCommentId,
@@ -19,11 +18,11 @@ import {
   dislikeIncrementReply,
   dislikeDecrementReply
 } from '../services/commentsService';
-import { 
-  getTopComments, 
-  getCommentsWithReplies, 
+import {
+  getTopComments,
+  getCommentsWithReplies,
   getRepliesWithCursor as getRepliesWithCursorUtil,
-  decodeCursor 
+  decodeCursor
 } from '../utils/ranking';
 import { PaginationResponse } from '../models/comments';
 
@@ -41,9 +40,10 @@ export const getComments = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
-    const limitNum = Math.min(parseInt(limit as string) || 20, 2147483647);
+    const limitNum = parseInt(limit as string);
+    const dbLimit = limitNum + 1; // Over-fetch by 1 for pagination detection
     const repliesLimitNum = parseInt(replies_limit as string);
-    // Parse cursor if provided
+
     let lastCreatedAt, lastId;
     if (cursor) {
       try {
@@ -64,10 +64,10 @@ export const getComments = async (req: Request, res: Response): Promise<void> =>
 
     if (type === 'top') {
       // Get top-level comments only with cursor pagination
-      const comments = await getCommentsByVideoIdWithCursor(videoId, limitNum, lastCreatedAt, lastId);
+      const comments = await getCommentsByVideoIdWithCursor(videoId, dbLimit, lastCreatedAt, lastId);
       const totalEstimated = await getCommentCountByVideoId(videoId);
       const topCommentsResult = getTopComments(comments, limitNum, cursor as string);
-      
+
       result = topCommentsResult.comments;
       pagination = {
         next_cursor: topCommentsResult.nextCursor,
@@ -77,13 +77,13 @@ export const getComments = async (req: Request, res: Response): Promise<void> =>
 
     } else if (type === 'nested') {
       // Get comments with their replies
-      const comments = await getCommentsByVideoIdWithCursor(videoId, limitNum, lastCreatedAt, lastId);
+      const comments = await getCommentsByVideoIdWithCursor(videoId, dbLimit, lastCreatedAt, lastId);
       const commentIds = comments.map(c => c.id);
       const replies = await getRepliesByCommentIds(commentIds);
       const totalEstimated = await getCommentCountByVideoId(videoId);
-      
+
       const nestedResult = getCommentsWithReplies(comments, replies, limitNum, repliesLimitNum, cursor as string);
-      
+
       result = nestedResult.comments;
       pagination = {
         next_cursor: nestedResult.nextCursor,
@@ -92,11 +92,10 @@ export const getComments = async (req: Request, res: Response): Promise<void> =>
       };
 
     } else {
-      // Default: ranked comments with cursor pagination
-      const comments = await getCommentsByVideoIdWithCursor(videoId, limitNum, lastCreatedAt, lastId);
+      const comments = await getCommentsByVideoIdWithCursor(videoId, dbLimit, lastCreatedAt, lastId);
       const totalEstimated = await getCommentCountByVideoId(videoId);
       const rankedResult = getTopComments(comments, limitNum, cursor as string);
-      
+
       result = rankedResult.comments;
       pagination = {
         next_cursor: rankedResult.nextCursor,
@@ -119,7 +118,7 @@ export const getComments = async (req: Request, res: Response): Promise<void> =>
   }
 };
 
-// POST /api/comments - Create a new comment
+// POST /api/comments - New comment
 export const createComment = async (req: Request, res: Response): Promise<void> => {
   try {
     const { videoId, userId, content } = req.body;
@@ -154,7 +153,7 @@ export const createComment = async (req: Request, res: Response): Promise<void> 
   }
 };
 
-// POST /api/comments/:id/replies - Create a new reply
+// POST /api/comments/:id/replies - New reply
 export const createReply = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id: commentId } = req.params;
@@ -189,7 +188,7 @@ export const createReply = async (req: Request, res: Response): Promise<void> =>
   }
 };
 
-// DELETE /api/comments/:id - Delete a comment
+// DELETE /api/comments/:id - Delete comment
 export const deleteComment = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
@@ -217,7 +216,7 @@ export const deleteComment = async (req: Request, res: Response): Promise<void> 
   }
 };
 
-// DELETE /api/replies/:id - Delete a reply
+// DELETE /api/replies/:id - Delete reply
 export const deleteReply = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
@@ -245,7 +244,7 @@ export const deleteReply = async (req: Request, res: Response): Promise<void> =>
   }
 };
 
-// GET /api/comments/:id/replies - Get replies for a comment with cursor pagination
+// GET /api/comments/:id/replies - Get replies for a comment
 export const getReplies = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id: commentId } = req.params;
@@ -259,9 +258,9 @@ export const getReplies = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    const limitNum = Math.min(parseInt(limit as string) || 20, 2147483647);
+    const limitNum = parseInt(limit as string);
+    const dbLimit = limitNum + 1; // Over-fetch by 1 for pagination detection
 
-    // Parse cursor if provided
     let lastCreatedAt, lastId;
     if (cursor) {
       try {
@@ -277,7 +276,7 @@ export const getReplies = async (req: Request, res: Response): Promise<void> => 
       }
     }
 
-    const replies = await getRepliesWithCursor(commentId, limitNum, lastCreatedAt, lastId);
+    const replies = await getRepliesWithCursor(commentId, dbLimit, lastCreatedAt, lastId);
     const totalEstimated = await getReplyCountByCommentId(commentId);
     const repliesResult = getRepliesWithCursorUtil(replies, limitNum, cursor as string);
 
@@ -422,4 +421,3 @@ export const decreaseDislikeReply = async (req: Request, res: Response): Promise
     res.status(500).json({ success: false, error: 'Failed to decrease reply dislikes' });
   }
 };
-    

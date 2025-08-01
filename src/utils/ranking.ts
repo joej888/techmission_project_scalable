@@ -37,7 +37,7 @@ function calculateReplyScore(reply: Reply): number {
   return Math.max(0, netScore) + recencyFactor;
 }
 
-// Format timestamp to human-readable relative time
+// Format timestamp to human-readable time
 function formatTimeAgo(createdAt: Date): string {
   const now = new Date();
   const secondsAgo = Math.floor((now.getTime() - createdAt.getTime()) / 1000);
@@ -59,18 +59,6 @@ function formatTimeAgo(createdAt: Date): string {
   }
 
   return 'just now';
-}
-
-// Rank comments by score
-function rankComments(comments: Comment[]): RankedComment[] {
-  return comments
-    .map(comment => ({
-      ...comment,
-      netScore: calculateNetScore(comment),
-      score: calculateCommentScore(comment),
-      timeAgo: formatTimeAgo(comment.createdAt)
-    }))
-    .sort((a, b) => b.score - a.score);
 }
 
 // Rank replies by score
@@ -106,54 +94,56 @@ export function decodeCursor(cursor: string): CursorInfo {
   }
 }
 
-// Generate next cursor from last item in results
-export function generateNextCursor(items: (RankedComment | RankedReply)[]): string | undefined {
-  if (items.length === 0) return undefined;
-  const lastItem = items[items.length - 1];
+export function generateNextCursor(chronologicalItems: Comment[] | Reply[]): string | undefined {
+  if (chronologicalItems.length === 0) return undefined;
+  const lastItem = chronologicalItems[chronologicalItems.length - 1];
   if (!lastItem) return undefined;
   return encodeCursor(lastItem.createdAt, lastItem.id);
 }
 
 // Get top comments with cursor support
-
 export function getTopComments(
-  comments: Comment[], 
-  limit: number, 
+  comments: Comment[],
+  limit: number,
   lastCursor?: string
 ): { comments: RankedComment[], nextCursor?: string | undefined, hasMore: boolean } {
-  const rankedComments = rankComments(comments);
-  const overFetched = rankedComments.slice(0, limit + 1);
-  
-  const hasMore = overFetched.length > limit;
-  const slicedComments = overFetched.slice(0, limit);
-  
+  const hasMore = comments.length > limit;
+  const chronologicalSlice = comments.slice(0, limit);
+  const commentsWithMetadata = chronologicalSlice.map(comment => ({
+    ...comment,
+    netScore: calculateNetScore(comment),
+    score: calculateCommentScore(comment),
+    timeAgo: formatTimeAgo(comment.createdAt)
+  }));
+
   return {
-    comments: slicedComments,
-    nextCursor: generateNextCursor(slicedComments),
+    comments: commentsWithMetadata,
+    nextCursor: hasMore ? generateNextCursor(comments.slice(0, limit)) : undefined,
     hasMore: hasMore
   };
 }
 
 // Get comments with their replies in a nested structure with cursor support
 export function getCommentsWithReplies(
-  comments: Comment[], 
+  comments: Comment[],
   replies: Reply[],
-  limit: number, 
-  repliesLimit: number, 
+  limit: number,
+  repliesLimit: number,
   lastCursor?: string
 ): { comments: RankedComment[], nextCursor?: string | undefined, hasMore: boolean } {
-  const rankedComments = rankComments(comments);
-  const limitNum = limit;
-  const overFetchLimit = limitNum + 1;
-  const overFetched = rankedComments.slice(0, overFetchLimit);
+  const hasMore = comments.length > limit;
+  const chronologicalSlice = comments.slice(0, limit);
+  const commentsWithMetadata = chronologicalSlice.map(comment => ({
+    ...comment,
+    netScore: calculateNetScore(comment),
+    score: calculateCommentScore(comment),
+    timeAgo: formatTimeAgo(comment.createdAt)
+  }));
 
-  const hasMore = overFetched.length > limit;
-  const slicedComments = overFetched.slice(0, limit);
-  //const slicedComments = rankedComments.slice(0, limit);
-  const commentsWithReplies = slicedComments.map(comment => {
-  const commentReplies = replies.filter(
-    r => r.commentId.toString() === comment.id.toString()
-  );
+  const commentsWithReplies = commentsWithMetadata.map(comment => {
+    const commentReplies = replies.filter(
+      r => r.commentId.toString() === comment.id.toString()
+    );
     const rankedReplies = rankReplies(commentReplies);
     const limitedReplies = rankedReplies.slice(0, repliesLimit);
 
@@ -165,7 +155,7 @@ export function getCommentsWithReplies(
 
   return {
     comments: commentsWithReplies,
-    nextCursor: generateNextCursor(slicedComments),
+    nextCursor: hasMore ? generateNextCursor(comments.slice(0, limit)) : undefined,
     hasMore
   };
 }
@@ -176,22 +166,18 @@ export function getRepliesWithCursor(
   limit: number,
   lastCursor?: string
 ): { replies: RankedReply[], nextCursor?: string | undefined, hasMore: boolean } {
-  const rankedReplies = rankReplies(replies);
-  const slicedReplies = rankedReplies.slice(0, limit);
+  const hasMore = replies.length > limit;
+  const chronologicalSlice = replies.slice(0, limit);
+  const repliesWithMetadata = chronologicalSlice.map(reply => ({
+    ...reply,
+    netScore: calculateNetScore(reply),
+    score: calculateReplyScore(reply),
+    timeAgo: formatTimeAgo(reply.createdAt)
+  }));
 
   return {
-    replies: slicedReplies,
-    nextCursor: generateNextCursor(slicedReplies),
-    hasMore: slicedReplies.length === limit
+    replies: repliesWithMetadata,
+    nextCursor: hasMore ? generateNextCursor(replies.slice(0, limit)) : undefined,
+    hasMore: hasMore
   };
 }
-
-export {
-  calculateRecencyFactor,
-  calculateNetScore,
-  calculateCommentScore,
-  calculateReplyScore,
-  formatTimeAgo,
-  rankComments,
-  rankReplies
-};

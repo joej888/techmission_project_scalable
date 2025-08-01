@@ -48,7 +48,7 @@ const mapRowToReply = (row: ReplyRow): Reply => ({
   createdAt: row.created_at
 });
 
-// Get comments with cursor-based pagination using indexing table
+// Get comments USING indexing table
 export const getCommentsByVideoIdWithCursor = async (
   videoId: string,
   limit: number,
@@ -56,7 +56,7 @@ export const getCommentsByVideoIdWithCursor = async (
   lastId?: string
 ): Promise<Comment[]> => {
   const client = await connectToDatabase();
-  
+
   let query: string;
   let params: any[];
 
@@ -67,7 +67,7 @@ export const getCommentsByVideoIdWithCursor = async (
       ORDER BY created_at DESC, id DESC
       LIMIT ?
     `,
-    params = [videoId, lastCreatedAt, lastId, limit]
+      params = [videoId, lastCreatedAt, lastId, limit]
   } else {
     // First page
     query = `
@@ -76,13 +76,13 @@ export const getCommentsByVideoIdWithCursor = async (
       ORDER BY created_at DESC, id DESC
       LIMIT ?
     `,
-    params = [videoId, limit]
+      params = [videoId, limit]
   }
   const result = await client.execute(query, params, { prepare: true });
   return result.rows.map(mapDbRowToCommentRow).map(mapRowToComment);
 };
 
-// Get replies with cursor-based pagination using indexing table
+// Get replies using indexing table
 export const getRepliesWithCursor = async (
   commentId: string,
   limit: number,
@@ -90,10 +90,10 @@ export const getRepliesWithCursor = async (
   lastId?: string
 ): Promise<Reply[]> => {
   const client = await connectToDatabase();
-  
+
   let query: string;
   let params: any[];
-  
+
   if (lastCreatedAt && lastId) {
     // Use cursor-based pagination
     query = `
@@ -115,45 +115,35 @@ export const getRepliesWithCursor = async (
       ORDER BY created_at DESC, id DESC
       LIMIT ?
     `,
-    params = [commentId, limit],
+      params = [commentId, limit],
     {
       hints: ['uuid', 'counter'],
       prepare: true
     }
   }
-  
+
   const result = await client.execute(query, params, { prepare: true });
   return result.rows.map(mapDbRowToReplyRow).map(mapRowToReply);
 };
 
-// Get all comments for a video (for nested structure - when we need all data)
-export const getCommentsByVideoId = async (videoId: string): Promise<Comment[]> => {
-  const client = await connectToDatabase();
-  const query = 'SELECT * FROM comments WHERE video_id = ? ORDER BY created_at DESC';
-  const result = await client.execute(query, [videoId]);
-  return result.rows.map(mapDbRowToCommentRow).map(mapRowToComment);
-};
-
-// Get all replies for multiple comments (for nested structure)
+// Get all replies (for nested structure)
 export const getRepliesByCommentIds = async (commentIds: string[]): Promise<Reply[]> => {
- if (commentIds.length === 0) return [];
- 
- const client = await connectToDatabase();
- 
- // Use the indexing table instead of original table with ORDER BY
- const queries = commentIds.map(commentId => 
-   client.execute('SELECT * FROM replies_by_comment_time WHERE comment_id = ?', [commentId])
- );
- 
- const results = await Promise.all(queries);
- const allReplies: Reply[] = [];
- 
- results.forEach(result => {
-   const replies = result.rows.map(mapDbRowToReplyRow).map(mapRowToReply);
-   allReplies.push(...replies);
- });
- 
- return allReplies;
+  if (commentIds.length === 0) return [];
+
+  const client = await connectToDatabase();
+  const queries = commentIds.map(commentId =>
+    client.execute('SELECT * FROM replies_by_comment_time WHERE comment_id = ?', [commentId])
+  );
+
+  const results = await Promise.all(queries);
+  const allReplies: Reply[] = [];
+
+  results.forEach(result => {
+    const replies = result.rows.map(mapDbRowToReplyRow).map(mapRowToReply);
+    allReplies.push(...replies);
+  });
+
+  return allReplies;
 };
 
 // Get specific comment by ID
@@ -304,25 +294,25 @@ export const createReply = async (reply: Omit<ReplyRow, 'id' | 'created_at'>): P
 // Delete comment (and all its replies)
 export const deleteComment = async (commentId: string): Promise<void> => {
   const client = await connectToDatabase();
-  
+
   // Get the comment first to get video_id and created_at for indexing table
   const comment = await getCommentById(commentId);
   if (!comment) {
     throw new Error(`Comment with id ${commentId} not found`);
   }
-  
+
   // Delete all replies for this comment from both tables
   const replies = await getRepliesByCommentIds([commentId]);
   for (const reply of replies) {
     await client.execute('DELETE FROM replies WHERE id = ?', [reply.id]);
-    await client.execute('DELETE FROM replies_by_comment_time WHERE comment_id = ? AND created_at = ? AND id = ?', 
+    await client.execute('DELETE FROM replies_by_comment_time WHERE comment_id = ? AND created_at = ? AND id = ?',
       [reply.commentId, reply.createdAt, reply.id]);
   }
-  
+
   // Delete the comment from both tables
   await Promise.all([
     client.execute('DELETE FROM comments WHERE id = ?', [commentId]),
-    client.execute('DELETE FROM comments_by_video_time WHERE video_id = ? AND created_at = ? AND id = ?', 
+    client.execute('DELETE FROM comments_by_video_time WHERE video_id = ? AND created_at = ? AND id = ?',
       [comment.videoId, comment.createdAt, comment.id])
   ]);
 };
@@ -330,21 +320,15 @@ export const deleteComment = async (commentId: string): Promise<void> => {
 // Delete reply
 export const deleteReply = async (replyId: string): Promise<void> => {
   const client = await connectToDatabase();
-  
-  // Get the reply to find parent comment and other details
   const reply = await getReplyById(replyId);
   if (!reply) {
     throw new Error(`Reply with id ${replyId} not found`);
   }
-  
-  // Delete the reply from both tables
   await Promise.all([
     client.execute('DELETE FROM replies WHERE id = ?', [replyId]),
-    client.execute('DELETE FROM replies_by_comment_time WHERE comment_id = ? AND created_at = ? AND id = ?', 
+    client.execute('DELETE FROM replies_by_comment_time WHERE comment_id = ? AND created_at = ? AND id = ?',
       [reply.commentId, reply.createdAt, reply.id])
   ]);
-  
-  // Decrease reply count for parent comment
   await decreaseReplyCount(reply.commentId);
 };
 
@@ -357,16 +341,16 @@ const updateCommentInBothTables = async (commentId: string, field: string, newVa
   }
 
   await Promise.all([
-  client.execute(`UPDATE comments SET ${field} = ? WHERE id = ?`, [newValue, commentId], { 
-    hints: ['counter', 'uuid'], 
-    prepare: true 
-  }),
-  client.execute(`UPDATE comments_by_video_time SET ${field} = ? WHERE video_id = ? AND created_at = ? AND id = ?`, 
-    [newValue, comment.videoId, comment.createdAt, comment.id], { 
-    hints: ['counter', 'uuid', 'timestamp', 'uuid'], 
-    prepare: true 
-  })
-]);
+    client.execute(`UPDATE comments SET ${field} = ? WHERE id = ?`, [newValue, commentId], {
+      hints: ['counter', 'uuid'],
+      prepare: true
+    }),
+    client.execute(`UPDATE comments_by_video_time SET ${field} = ? WHERE video_id = ? AND created_at = ? AND id = ?`,
+      [newValue, comment.videoId, comment.createdAt, comment.id], {
+      hints: ['counter', 'uuid', 'timestamp', 'uuid'],
+      prepare: true
+    })
+  ]);
 };
 
 const updateReplyInBothTables = async (replyId: string, field: string, newValue: number): Promise<void> => {
@@ -375,46 +359,47 @@ const updateReplyInBothTables = async (replyId: string, field: string, newValue:
   if (!reply) {
     throw new Error(`Reply with id ${replyId} not found`);
   }
-  client.execute(`UPDATE replies SET ${field} = ? WHERE id = ?`, [newValue, replyId], { 
-    hints: ['counter', 'uuid'], 
-    prepare: true 
-  }),
-  client.execute(`UPDATE replies_by_comment_time SET ${field} = ? WHERE comment_id = ? AND created_at = ? AND id = ?`, 
-    [newValue, reply.commentId, reply.createdAt, reply.id], { 
-    hints: ['counter', 'uuid', 'timestamp', 'uuid'], 
-    prepare: true 
-  })
+
+  await Promise.all([
+    client.execute(`UPDATE replies SET ${field} = ? WHERE id = ?`, [newValue, replyId], {
+      hints: ['counter', 'uuid'],
+      prepare: true
+    }),
+    client.execute(`UPDATE replies_by_comment_time SET ${field} = ? WHERE comment_id = ? AND created_at = ? AND id = ?`,
+      [newValue, reply.commentId, reply.createdAt, reply.id], {
+      hints: ['counter', 'uuid', 'timestamp', 'uuid'],
+      prepare: true
+    })
+  ]);
 };
 
 // Increase reply count for a comment
 export const increaseReplyCount = async (commentId: string): Promise<void> => {
   const client = await connectToDatabase();
-  
+
   const selectQuery = 'SELECT reply_count FROM comments WHERE id = ?';
   const result = await client.execute(selectQuery, [commentId]);
-  
+
   if (!result.rows[0]) {
     throw new Error(`Comment with id ${commentId} not found`);
   }
-  
-    let currentCount = result.rows[0].reply_count.toNumber();
 
+  let currentCount = result.rows[0].reply_count.toNumber();
   currentCount = currentCount + 1; // Increment reply count ++
-  
+
   await updateCommentInBothTables(commentId, 'reply_count', currentCount);
 };
 
 // Decrease reply count for a comment
 export const decreaseReplyCount = async (commentId: string): Promise<void> => {
   const client = await connectToDatabase();
-  
   const selectQuery = 'SELECT reply_count FROM comments WHERE id = ?';
   const result = await client.execute(selectQuery, [commentId]);
-  
+
   if (!result.rows[0]) {
     throw new Error(`Comment with id ${commentId} not found`);
   }
-  
+
   let currentCount = result.rows[0].reply_count.toNumber();
   if (currentCount > 0) {
     currentCount = currentCount - 1;
@@ -427,14 +412,13 @@ export const likeIncrementComment = async (commentId: string): Promise<void> => 
   const client = await connectToDatabase();
   const selectQuery = 'SELECT likes FROM comments WHERE id = ?';
   const result = await client.execute(selectQuery, [commentId]);
-  
+
   if (!result.rows[0]) {
     throw new Error(`Comment with id ${commentId} not found`);
   }
-  
+
   let likesCount = result.rows[0].likes.toNumber();
   likesCount = likesCount + 1;
-  
   await updateCommentInBothTables(commentId, 'likes', likesCount);
 };
 
@@ -442,11 +426,11 @@ export const likeDecrementComment = async (commentId: string): Promise<void> => 
   const client = await connectToDatabase();
   const selectQuery = 'SELECT likes FROM comments WHERE id = ?';
   const result = await client.execute(selectQuery, [commentId]);
-  
+
   if (!result.rows[0]) {
     throw new Error(`Comment with id ${commentId} not found`);
   }
-  
+
   let likesCount = result.rows[0].likes.toNumber();
   if (likesCount > 0) {
     likesCount = likesCount - 1;
@@ -458,14 +442,14 @@ export const dislikeIncrementComment = async (commentId: string): Promise<void> 
   const client = await connectToDatabase();
   const selectQuery = 'SELECT dislikes FROM comments WHERE id = ?';
   const result = await client.execute(selectQuery, [commentId]);
-  
+
   if (!result.rows[0]) {
     throw new Error(`Comment with id ${commentId} not found`);
   }
-  
+
   let dislikesCount = result.rows[0].dislikes.toNumber();
   dislikesCount = dislikesCount + 1;
-  
+
   await updateCommentInBothTables(commentId, 'dislikes', dislikesCount);
 };
 
@@ -473,11 +457,11 @@ export const dislikeDecrementComment = async (commentId: string): Promise<void> 
   const client = await connectToDatabase();
   const selectQuery = 'SELECT dislikes FROM comments WHERE id = ?';
   const result = await client.execute(selectQuery, [commentId]);
-  
+
   if (!result.rows[0]) {
     throw new Error(`Comment with id ${commentId} not found`);
   }
-  
+
   let dislikesCount = result.rows[0].dislikes.toNumber();
   if (dislikesCount > 0) {
     dislikesCount = dislikesCount - 1;
@@ -490,14 +474,14 @@ export const likeIncrementReply = async (replyId: string): Promise<void> => {
   const client = await connectToDatabase();
   const selectQuery = 'SELECT likes FROM replies WHERE id = ?';
   const result = await client.execute(selectQuery, [replyId]);
-  
+
   if (!result.rows[0]) {
     throw new Error(`Reply with id ${replyId} not found`);
   }
-  
+
   let likesCount = result.rows[0].likes.toNumber();
   likesCount = likesCount + 1;
-  
+
   await updateReplyInBothTables(replyId, 'likes', likesCount);
 };
 
@@ -505,11 +489,11 @@ export const likeDecrementReply = async (replyId: string): Promise<void> => {
   const client = await connectToDatabase();
   const selectQuery = 'SELECT likes FROM replies WHERE id = ?';
   const result = await client.execute(selectQuery, [replyId]);
-  
+
   if (!result.rows[0]) {
     throw new Error(`Reply with id ${replyId} not found`);
   }
-  
+
   let likesCount = result.rows[0].likes.toNumber();
   if (likesCount > 0) {
     likesCount = likesCount - 1;
@@ -521,14 +505,14 @@ export const dislikeIncrementReply = async (replyId: string): Promise<void> => {
   const client = await connectToDatabase();
   const selectQuery = 'SELECT dislikes FROM replies WHERE id = ?';
   const result = await client.execute(selectQuery, [replyId]);
-  
+
   if (!result.rows[0]) {
     throw new Error(`Reply with id ${replyId} not found`);
   }
-  
+
   let dislikesCount = result.rows[0].dislikes.toNumber();
   dislikesCount = dislikesCount + 1;
-  
+
   await updateReplyInBothTables(replyId, 'dislikes', dislikesCount);
 };
 
@@ -536,11 +520,11 @@ export const dislikeDecrementReply = async (replyId: string): Promise<void> => {
   const client = await connectToDatabase();
   const selectQuery = 'SELECT dislikes FROM replies WHERE id = ?';
   const result = await client.execute(selectQuery, [replyId]);
-  
+
   if (!result.rows[0]) {
     throw new Error(`Reply with id ${replyId} not found`);
   }
-  
+
   let dislikesCount = result.rows[0].dislikes.toNumber();
   if (dislikesCount > 0) {
     dislikesCount = dislikesCount - 1;
