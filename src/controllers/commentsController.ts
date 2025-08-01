@@ -19,6 +19,7 @@ import {
   dislikeDecrementReply
 } from '../services/commentsService';
 import {
+  rankReplies,
   getTopComments,
   getCommentsWithReplies,
   getRepliesWithCursor as getRepliesWithCursorUtil,
@@ -30,7 +31,7 @@ import { PaginationResponse } from '../models/comments';
 export const getComments = async (req: Request, res: Response): Promise<void> => {
   try {
     const { videoId } = req.params;
-    const { type, limit = '20', cursor, replies_limit = '5' } = req.query;
+    const { type, limit = '20', cursor, replies_limit = '5', sort = 'ranked' } = req.query;
 
     if (!videoId) {
       res.status(400).json({
@@ -43,7 +44,7 @@ export const getComments = async (req: Request, res: Response): Promise<void> =>
     const limitNum = parseInt(limit as string);
     const dbLimit = limitNum + 1; // Over-fetch by 1 for pagination detection
     const repliesLimitNum = parseInt(replies_limit as string);
-
+    
     let lastCreatedAt, lastId;
     if (cursor) {
       try {
@@ -66,8 +67,8 @@ export const getComments = async (req: Request, res: Response): Promise<void> =>
       // Get top-level comments only with cursor pagination
       const comments = await getCommentsByVideoIdWithCursor(videoId, dbLimit, lastCreatedAt, lastId);
       const totalEstimated = await getCommentCountByVideoId(videoId);
-      const topCommentsResult = getTopComments(comments, limitNum, cursor as string);
-
+      const topCommentsResult = getTopComments(comments, limitNum, cursor as string, sort as string);
+      
       result = topCommentsResult.comments;
       pagination = {
         next_cursor: topCommentsResult.nextCursor,
@@ -81,9 +82,9 @@ export const getComments = async (req: Request, res: Response): Promise<void> =>
       const commentIds = comments.map(c => c.id);
       const replies = await getRepliesByCommentIds(commentIds);
       const totalEstimated = await getCommentCountByVideoId(videoId);
-
-      const nestedResult = getCommentsWithReplies(comments, replies, limitNum, repliesLimitNum, cursor as string);
-
+      
+      const nestedResult = getCommentsWithReplies(comments, replies, limitNum, repliesLimitNum, cursor as string, sort as string);
+      
       result = nestedResult.comments;
       pagination = {
         next_cursor: nestedResult.nextCursor,
@@ -94,8 +95,8 @@ export const getComments = async (req: Request, res: Response): Promise<void> =>
     } else {
       const comments = await getCommentsByVideoIdWithCursor(videoId, dbLimit, lastCreatedAt, lastId);
       const totalEstimated = await getCommentCountByVideoId(videoId);
-      const rankedResult = getTopComments(comments, limitNum, cursor as string);
-
+      const rankedResult = getTopComments(comments, limitNum, cursor as string, sort as string);
+      
       result = rankedResult.comments;
       pagination = {
         next_cursor: rankedResult.nextCursor,
@@ -277,8 +278,9 @@ export const getReplies = async (req: Request, res: Response): Promise<void> => 
     }
 
     const replies = await getRepliesWithCursor(commentId, dbLimit, lastCreatedAt, lastId);
+    const rankedReplies = rankReplies(replies);
     const totalEstimated = await getReplyCountByCommentId(commentId);
-    const repliesResult = getRepliesWithCursorUtil(replies, limitNum, cursor as string);
+    const repliesResult = getRepliesWithCursorUtil(rankedReplies, limitNum, cursor as string);
 
     const pagination: PaginationResponse = {
       next_cursor: repliesResult.nextCursor,

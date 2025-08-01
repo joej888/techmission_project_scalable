@@ -61,8 +61,7 @@ function formatTimeAgo(createdAt: Date): string {
   return 'just now';
 }
 
-// Rank replies by score
-function rankReplies(replies: Reply[]): RankedReply[] {
+export function rankReplies(replies: Reply[]): RankedReply[] {
   return replies
     .map(reply => ({
       ...reply,
@@ -73,7 +72,6 @@ function rankReplies(replies: Reply[]): RankedReply[] {
     .sort((a, b) => b.score - a.score);
 }
 
-// Cursor encoding/decoding functions
 export function encodeCursor(createdAt: Date, id: string): string {
   const cursorData = {
     createdAt: createdAt.toISOString(),
@@ -101,14 +99,17 @@ export function generateNextCursor(chronologicalItems: Comment[] | Reply[]): str
   return encodeCursor(lastItem.createdAt, lastItem.id);
 }
 
-// Get top comments with cursor support
 export function getTopComments(
-  comments: Comment[],
-  limit: number,
-  lastCursor?: string
+  comments: Comment[], 
+  limit: number, 
+  lastCursor?: string,
+  sort: string = 'ranked'
 ): { comments: RankedComment[], nextCursor?: string | undefined, hasMore: boolean } {
+  // Keep chronological DB order for pagination
   const hasMore = comments.length > limit;
   const chronologicalSlice = comments.slice(0, limit);
+  
+  // Convert to RankedComment format 
   const commentsWithMetadata = chronologicalSlice.map(comment => ({
     ...comment,
     netScore: calculateNetScore(comment),
@@ -116,34 +117,53 @@ export function getTopComments(
     timeAgo: formatTimeAgo(comment.createdAt)
   }));
 
+  // Apply sorting - default is now ranked by score
+  let sortedComments = commentsWithMetadata;
+  if (sort === 'chronological') {
+    // Keep DB order when explicitly requested
+    sortedComments = commentsWithMetadata;
+  } else {
+    // Default: sort by score (ranked)
+    sortedComments = [...commentsWithMetadata].sort((a, b) => b.score - a.score);
+  }
+  
   return {
-    comments: commentsWithMetadata,
+    comments: sortedComments,
     nextCursor: hasMore ? generateNextCursor(comments.slice(0, limit)) : undefined,
     hasMore: hasMore
   };
 }
 
-// Get comments with their replies in a nested structure with cursor support
 export function getCommentsWithReplies(
-  comments: Comment[],
+  comments: Comment[], 
   replies: Reply[],
-  limit: number,
-  repliesLimit: number,
-  lastCursor?: string
+  limit: number, 
+  repliesLimit: number, 
+  lastCursor?: string,
+  sort: string = 'ranked'
 ): { comments: RankedComment[], nextCursor?: string | undefined, hasMore: boolean } {
   const hasMore = comments.length > limit;
   const chronologicalSlice = comments.slice(0, limit);
+  
   const commentsWithMetadata = chronologicalSlice.map(comment => ({
     ...comment,
     netScore: calculateNetScore(comment),
     score: calculateCommentScore(comment),
     timeAgo: formatTimeAgo(comment.createdAt)
   }));
+  
+  let sortedComments = commentsWithMetadata;
+  if (sort === 'chronological') {
+    sortedComments = commentsWithMetadata;
+  } else {
+    sortedComments = [...commentsWithMetadata].sort((a, b) => b.score - a.score);
+  }
 
-  const commentsWithReplies = commentsWithMetadata.map(comment => {
+  const commentsWithReplies = sortedComments.map(comment => {
     const commentReplies = replies.filter(
       r => r.commentId.toString() === comment.id.toString()
     );
+    // Always rank replies within each comment for better UX
     const rankedReplies = rankReplies(commentReplies);
     const limitedReplies = rankedReplies.slice(0, repliesLimit);
 
@@ -160,7 +180,6 @@ export function getCommentsWithReplies(
   };
 }
 
-// Get replies with cursor support
 export function getRepliesWithCursor(
   replies: Reply[],
   limit: number,

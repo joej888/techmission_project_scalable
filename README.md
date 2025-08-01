@@ -74,9 +74,10 @@ The API supports efficient cursor-based pagination for handling large comment da
 - `limit` - Number of comments per page (default: 20, max: 2147483647)
 - `cursor` - Base64 encoded cursor for next page (get from previous response)
 - `replies_limit` - Number of replies per comment in nested mode (default: 5)
+- `sort` - To sort based on rank or chronological.(ranked/chronological)
 
 **Comment Types:**
-- **`type=top`** - Get top-level comments only (chronological order)
+- **`type=top`** - Get top-level comments only
   ```http
   GET /api/comments/video123?type=top&limit=10
   ```
@@ -86,10 +87,23 @@ The API supports efficient cursor-based pagination for handling large comment da
   GET /api/comments/video123?type=nested&limit=5&replies_limit=3
   ```
 
-- **Default (no type)** - Get ranked comments (chronological order with metadata)
+- **`no type`** - Get ranked comments
   ```http
   GET /api/comments/video123?limit=20
   ```
+
+- **Default (only videoId)** - Get ranked comments 
+  ```http
+  GET /api/comments/video123
+  ```
+
+- **`sort = ranked`** - Get sorted on rank.
+  GET /api/comments/:videoId?sort=ranked     # Default behavior, sorts by score
+
+
+- **`sort = chronological`** - Get sorted chronological.
+  GET /api/comments/:videoId?sort=chronological  # Returns in DB order (created_at DESC)
+
 
 **Pagination Example:**
 ```bash
@@ -282,7 +296,16 @@ src/
    ```bash
    curl "http://localhost:4000/api/comments/abc123?type=top&limit=5"
    ```
-
+  ```bash
+   curl "http://localhost:4000/api/comments/video_123?type=top&sort=ranked"
+  ```
+  ```bash
+   curl "http://localhost:4000/api/comments/video_123?type=top&sort=chronological"
+  ```
+  ```bash
+   curl "http://localhost:4000/api/comments/video_123?type=top&sort=chronological&limit=2&cursor=eyJjcmVhdGVkQXQiOiIyMDI1LTA3LTMxVDAzOjU5OjM0LjYxN1oiLCJpZCI6IjEyYzUxYThkLWZlMTMtNDM4Zi1iYmNiLWUyNWE2NGUxNWFkYSJ9"
+   ```
+  
 3. **Get nested comments with replies:**
    ```bash
    curl "http://localhost:4000/api/comments/abc123?type=nested&limit=3&replies_limit=2"
@@ -319,6 +342,3 @@ src/
 3. **Build errors**: Make sure TypeScript is properly installed
 4. **Invalid cursor error**: Cursors are base64 encoded and expire when data structure changes
 
----
-
-That's it! You now have a working YouTube comments API with smart ranking and efficient cursor-based pagination.
